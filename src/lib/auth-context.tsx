@@ -46,17 +46,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true
     
-    // 초기 세션 확인 (타임아웃 설정)
+    // 단순한 초기 세션 확인 (타임아웃 완전 제거)
     const initializeAuth = async () => {
       try {
-        // 5초 타임아웃 설정
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Authentication timeout')), 5000)
-        )
-        
-        const authPromise = refreshUser()
-        
-        await Promise.race([authPromise, timeoutPromise])
+        await refreshUser()
       } catch (error) {
         console.error('인증 초기화 오류:', error)
         if (mounted) {
@@ -71,22 +64,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initializeAuth()
 
-    // 인증 상태 변경 리스너
+    // 인증 상태 변경 리스너 (단순화)
     const { data: { subscription } } = auth.onAuthStateChange(
       async (event, session) => {
-        console.log('Auth state changed:', event, session)
+        console.log('Auth state changed:', event, session?.user?.email)
         
         if (!mounted) return
         
-        if (event === 'SIGNED_IN') {
-          setLoading(true)
-          await refreshUser()
+        if (event === 'SIGNED_IN' && session?.user) {
+          setUser(session.user)
           setLoading(false)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
           setLoading(false)
-        } else if (event === 'TOKEN_REFRESHED') {
-          await refreshUser()
+        } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+          setUser(session.user)
         }
       }
     )
