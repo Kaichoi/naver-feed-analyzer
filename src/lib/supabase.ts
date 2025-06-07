@@ -192,12 +192,24 @@ export const auth = {
   // 구글 로그인
   async signInWithGoogle() {
     if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    
+    console.log('🔵 Google OAuth 시작:', {
+      currentUrl: window.location.href,
+      redirectTo: `${window.location.origin}/auth/callback`
+    })
+    
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`
+        redirectTo: `${window.location.origin}/auth/callback`,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        }
       }
     })
+    
+    console.log('🔵 Google OAuth 응답:', { data, error })
     
     if (error) throw error
     return data
