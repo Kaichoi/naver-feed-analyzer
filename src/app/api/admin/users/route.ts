@@ -113,7 +113,10 @@ export async function GET(request: NextRequest) {
     // 관리자 권한 확인
     console.log('관리자 권한 확인 중...', user.id)
     try {
-      const { data: profile, error: profileError } = await supabaseClient
+      // SERVICE KEY를 사용하여 프로필 조회 (RLS 우회)
+      const serviceSupabase = getServiceSupabase()
+      
+      const { data: profile, error: profileError } = await serviceSupabase
         .from('profiles')
         .select('is_admin')
         .eq('id', user.id)
