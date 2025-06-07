@@ -94,6 +94,7 @@ function LoginContent() {
         // 로그인
         const { user } = await auth.signIn(formData.email, formData.password)
         console.log('로그인 성공:', user)
+        // 프로필 확인 없이 바로 분석 페이지로 (성능 향상)
         router.push('/analysis')
       } else {
         // 회원가입
