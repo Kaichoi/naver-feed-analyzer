@@ -252,37 +252,87 @@ export const db = {
     return data || []
   },
 
-  // 모든 인증된 사용자 가져오기 (관리자용) - auth.users 테이블 조회
+  // 모든 인증된 사용자 가져오기 (관리자용) - 서버 API 호출
   async getAllAuthUsers() {
     if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
     
     try {
-      // admin API를 사용하여 모든 사용자 조회
-      const { data, error } = await supabase.auth.admin.listUsers()
+      // 현재 사용자의 토큰 가져오기
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        throw new Error('인증 토큰이 없습니다.')
+      }
       
-      if (error) throw error
-      return data.users || []
+      // 서버 API 호출
+      const response = await fetch('/api/admin/users', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || `HTTP ${response.status}`)
+      }
+      
+      const data = await response.json()
+      return data.authUsers || []
     } catch (error) {
       console.error('인증 사용자 조회 오류:', error)
-      // 권한이 없는 경우 빈 배열 반환
-      return []
+      throw error
     }
   },
 
-  // 프로필이 없는 사용자들을 위한 자동 동기화
+  // 서버 API를 통한 사용자 현황 조회 (디버깅용)
+  async getUsersDebugInfo() {
+    if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    
+    try {
+      // 현재 사용자의 토큰 가져오기
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        throw new Error('인증 토큰이 없습니다.')
+      }
+      
+      // 서버 API 호출
+      const response = await fetch('/api/admin/users', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || `HTTP ${response.status}`)
+      }
+      
+      const data = await response.json()
+      return {
+        authUsers: data.authUsers || [],
+        profiles: data.profiles || [],
+        summary: data.summary || {}
+      }
+    } catch (error) {
+      console.error('사용자 디버그 정보 조회 오류:', error)
+      throw error
+    }
+  },
+
+  // 프로필이 없는 사용자들을 위한 자동 동기화 (서버 API 사용)
   async syncMissingProfiles() {
     if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
     
     try {
-      // 모든 인증된 사용자 가져오기
-      const authUsers = await this.getAllAuthUsers()
+      // 서버 API를 통해 사용자 정보 가져오기
+      const debugInfo = await this.getUsersDebugInfo()
+      const { authUsers, profiles } = debugInfo
       
-      // 모든 프로필 가져오기
-      const profiles = await this.getAllProfiles()
-      const profileIds = new Set(profiles.map(p => p.id))
-      
-      // 프로필이 없는 사용자들 찾기
-      const missingProfiles = authUsers.filter(user => !profileIds.has(user.id))
+      const profileIds = new Set(profiles.map((p: any) => p.id))
+      const missingProfiles = authUsers.filter((user: any) => !profileIds.has(user.id))
       
       if (missingProfiles.length === 0) {
         return { synced: 0, total: authUsers.length }
@@ -291,7 +341,7 @@ export const db = {
       console.log(`${missingProfiles.length}명의 사용자 프로필이 누락되어 자동 생성합니다.`)
       
       // 누락된 프로필들 자동 생성
-      const syncPromises = missingProfiles.map(async (user) => {
+      const syncPromises = missingProfiles.map(async (user: any) => {
         try {
           await this.upsertProfile({
             id: user.id,

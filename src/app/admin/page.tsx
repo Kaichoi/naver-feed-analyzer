@@ -49,7 +49,7 @@ export default function AdminPage() {
   const router = useRouter()
   const [isAdmin, setIsAdmin] = useState(false)
   const [isChecking, setIsChecking] = useState(true)
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'debug'>('dashboard')
   const [stats, setStats] = useState<AdminStats>({
     totalUsers: 0,
     totalAnalyses: 0,
@@ -65,6 +65,12 @@ export default function AdminPage() {
     missing: number
     syncing: boolean
   }>({ total: 0, missing: 0, syncing: false })
+  const [debugInfo, setDebugInfo] = useState<{
+    authUsers: any[]
+    profiles: any[]
+    summary: any
+    error?: string
+  } | null>(null)
 
   const loadAdminData = useCallback(async () => {
     try {
@@ -124,19 +130,24 @@ export default function AdminPage() {
       setUsers(profiles)
       setDailyStats(recentStats)
 
-      // 동기화 상태 확인
+      // 서버 API를 통한 디버깅 정보 로드
       try {
-        const authUsers = await db.getAllAuthUsers()
-        const profileIds = new Set(profiles.map(p => p.id))
-        const missingCount = authUsers.filter(user => !profileIds.has(user.id)).length
+        const debugData = await db.getUsersDebugInfo()
+        setDebugInfo(debugData)
         
         setSyncStatus({
-          total: authUsers.length,
-          missing: missingCount,
+          total: debugData.summary.totalAuthUsers || 0,
+          missing: debugData.summary.missingProfiles || 0,
           syncing: false
         })
-      } catch (syncError) {
-        console.warn('동기화 상태 확인 실패:', syncError)
+      } catch (debugError) {
+        console.error('디버깅 정보 로드 실패:', debugError)
+        setDebugInfo({
+          authUsers: [],
+          profiles: [],
+          summary: {},
+          error: debugError instanceof Error ? debugError.message : 'Unknown error'
+        })
       }
     } catch (error) {
       console.error('관리자 데이터 로드 오류:', error)
@@ -280,6 +291,17 @@ export default function AdminPage() {
               >
                 <Users className="inline h-4 w-4 mr-2" />
                 사용자 관리
+              </button>
+              <button
+                onClick={() => setActiveTab('debug')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'debug'
+                    ? 'border-purple-500 text-purple-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <Shield className="inline h-4 w-4 mr-2" />
+                시스템 진단
               </button>
             </nav>
           </div>
@@ -562,6 +584,137 @@ export default function AdminPage() {
                     </tbody>
                   </table>
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Debug Tab */}
+        {activeTab === 'debug' && (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  시스템 진단
+                </CardTitle>
+                <CardDescription>
+                  Supabase 인증 시스템과 프로필 데이터베이스의 실제 상태를 확인합니다
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {debugInfo?.error ? (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <h3 className="font-medium text-red-800 mb-2">오류 발생</h3>
+                    <p className="text-red-600 text-sm">{debugInfo.error}</p>
+                    <Button 
+                      onClick={loadAdminData} 
+                      className="mt-3" 
+                      size="sm"
+                    >
+                      다시 시도
+                    </Button>
+                  </div>
+                ) : debugInfo ? (
+                  <div className="space-y-6">
+                    {/* 요약 통계 */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <h3 className="font-medium text-blue-800">Auth Users (인증 테이블)</h3>
+                        <p className="text-2xl font-bold text-blue-600">{debugInfo.summary.totalAuthUsers}</p>
+                        <p className="text-sm text-blue-600">Supabase auth.users 테이블</p>
+                      </div>
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <h3 className="font-medium text-green-800">Profiles (프로필 테이블)</h3>
+                        <p className="text-2xl font-bold text-green-600">{debugInfo.summary.totalProfiles}</p>
+                        <p className="text-sm text-green-600">앱 profiles 테이블</p>
+                      </div>
+                      <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                        <h3 className="font-medium text-orange-800">누락 프로필</h3>
+                        <p className="text-2xl font-bold text-orange-600">{debugInfo.summary.missingProfiles}</p>
+                        <p className="text-sm text-orange-600">동기화 필요</p>
+                      </div>
+                    </div>
+
+                    {/* Auth Users 상세 */}
+                    <div>
+                      <h3 className="text-lg font-medium mb-3">인증된 사용자 목록 (auth.users)</h3>
+                      <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
+                        {debugInfo.authUsers.length > 0 ? (
+                          <div className="space-y-2">
+                            {debugInfo.authUsers.map((user, index) => (
+                              <div key={user.id} className="bg-white rounded p-3 text-sm">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div><strong>#{index + 1}</strong></div>
+                                  <div><strong>ID:</strong> {user.id}</div>
+                                  <div><strong>이메일:</strong> {user.email}</div>
+                                  <div><strong>가입일:</strong> {new Date(user.created_at).toLocaleString('ko-KR')}</div>
+                                  <div><strong>이메일 인증:</strong> {user.email_confirmed_at ? '완료' : '미완료'}</div>
+                                  <div><strong>마지막 로그인:</strong> {user.last_sign_in_at ? new Date(user.last_sign_in_at).toLocaleString('ko-KR') : '없음'}</div>
+                                </div>
+                                {user.user_metadata && Object.keys(user.user_metadata).length > 0 && (
+                                  <div className="mt-2 pt-2 border-t">
+                                    <strong>메타데이터:</strong> {JSON.stringify(user.user_metadata, null, 2)}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-gray-500">인증된 사용자가 없습니다.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Profiles 상세 */}
+                    <div>
+                      <h3 className="text-lg font-medium mb-3">프로필 목록 (profiles)</h3>
+                      <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
+                        {debugInfo.profiles.length > 0 ? (
+                          <div className="space-y-2">
+                            {debugInfo.profiles.map((profile, index) => (
+                              <div key={profile.id} className="bg-white rounded p-3 text-sm">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div><strong>#{index + 1}</strong></div>
+                                  <div><strong>ID:</strong> {profile.id}</div>
+                                  <div><strong>이메일:</strong> {profile.email}</div>
+                                  <div><strong>이름:</strong> {profile.full_name || '없음'}</div>
+                                  <div><strong>관리자:</strong> {profile.is_admin ? '예' : '아니오'}</div>
+                                  <div><strong>분석 횟수:</strong> {profile.total_analysis_count}</div>
+                                  <div><strong>마지막 분석:</strong> {profile.last_analysis_at ? new Date(profile.last_analysis_at).toLocaleString('ko-KR') : '없음'}</div>
+                                  <div><strong>생성일:</strong> {new Date(profile.created_at).toLocaleString('ko-KR')}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-gray-500">프로필이 없습니다.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 누락 사용자 분석 */}
+                    {debugInfo.summary.missingProfiles > 0 && (
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                        <h3 className="font-medium text-yellow-800 mb-2">누락된 프로필 사용자</h3>
+                        <div className="space-y-2">
+                          {debugInfo.authUsers
+                            .filter(authUser => !debugInfo.profiles.some(profile => profile.id === authUser.id))
+                            .map((missingUser, index) => (
+                              <div key={missingUser.id} className="bg-white rounded p-2 text-sm">
+                                <div><strong>#{index + 1}</strong> {missingUser.email} (가입: {new Date(missingUser.created_at).toLocaleDateString('ko-KR')})</div>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
+                    <p className="mt-2 text-gray-600">진단 정보 로딩 중...</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
