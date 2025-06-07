@@ -151,7 +151,7 @@ export default function AnalysisPage() {
     }
   }, [analysisRestriction.timeLeft, checkAnalysisPermission])
 
-  // 크롤링 시작 (서버 API 사용) - 성능 최적화
+  // 크롤링 시작 (서버 API 사용) - 병렬 처리로 성능 최적화
   const startCrawling = async () => {
     if (!user) return
     
@@ -195,77 +195,76 @@ export default function AnalysisPage() {
     try {
       const sessionId = 'spGLaNSR5qMlh35F'
       const maxScanCount = 15 // 스캔 횟수
-      const delay = 1500 // 파이썬과 동일한 딜레이 (1.5초)
+      const delay = 800 // 병렬 처리용 단축 딜레이
+      const concurrency = 3 // 동시 처리 수
       
-      let nextCursor: string | undefined
-      let adAfterCardsCount: number | undefined
-      let adNextSeq: number | undefined
+      // 병렬 처리를 위한 배치 생성
+      const batches = []
+      for (let i = 0; i < maxScanCount; i += concurrency) {
+        batches.push(Array.from({ length: Math.min(concurrency, maxScanCount - i) }, (_, j) => i + j + 1))
+      }
       
-      // 순차 처리 (파이썬과 동일)
-      for (let page = 1; page <= maxScanCount; page++) {
-        setCurrentItem(page)
-        setProgress((page / maxScanCount) * 100)
-        
-        try {
-          const response = await fetch('/api/crawl', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ 
-              sessionId, 
-              page,
-              nextCursor,
-              adAfterCardsCount,
-              adNextSeq
-            }),
-          })
-          
-          if (!response.ok) {
-            console.warn(`스캔 ${page} 요청 실패:`, response.status)
-            continue
-          }
-          
-          const result = await response.json()
-          
-          if (result.error) {
-            console.warn(`스캔 ${page} 오류:`, result.error)
-            continue
-          }
-          
-          // NextCursor 파라미터 업데이트
-          nextCursor = result.nextCursor
-          adAfterCardsCount = result.adAfterCardsCount  
-          adNextSeq = result.adNextSeq
-          
-          const pageItems = result.items || []
-          
-          // 한 페이지에서 아이템이 없으면 종료 (파이썬과 동일)
-          if (pageItems.length === 0) {
-            console.log(`페이지 ${page}에서 데이터가 없어 분석 종료`)
-            break
-          }
-          
-          // 새로운 아이템들 추가 (중복 제거)
-          setItems(prev => {
-            const newItems = [...prev]
-            for (const newItem of pageItems) {
-              if (!newItems.some(existingItem => existingItem.url === newItem.url)) {
-                newItems.push(newItem)
-              }
+      let processedPages = 0
+      const totalPages = maxScanCount
+      
+      // 각 배치를 순차적으로 처리하되, 배치 내에서는 병렬 처리
+      for (const batch of batches) {
+        const batchPromises = batch.map(async (page) => {
+          try {
+            const response = await fetch('/api/crawl', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ 
+                sessionId, 
+                page
+              }),
+            })
+            
+            if (!response.ok) {
+              console.warn(`스캔 ${page} 요청 실패:`, response.status)
+              return []
             }
-            return newItems
-          })
-          
-          // 마지막 페이지가 아니면 딜레이
-          if (page < maxScanCount) {
-            await new Promise(resolve => setTimeout(resolve, delay))
+            
+            const result = await response.json()
+            
+            if (result.error) {
+              console.warn(`스캔 ${page} 오류:`, result.error)
+              return []
+            }
+            
+            return result.items || []
+            
+          } catch (error) {
+            console.error(`스캔 ${page} 처리 중 오류:`, error)
+            return []
           }
-          
-        } catch (error) {
-          console.error(`스캔 ${page} 처리 중 오류:`, error)
-          // 오류 시 해당 페이지만 건너뛰고 계속 진행
-          continue
+        })
+        
+        // 배치 내 모든 요청 완료 대기
+        const batchResults = await Promise.all(batchPromises)
+        
+        // 결과 병합 및 중복 제거
+        const newItems = batchResults.flat()
+        setItems(prev => {
+          const combined = [...prev]
+          for (const newItem of newItems) {
+            if (!combined.some(existingItem => existingItem.url === newItem.url)) {
+              combined.push(newItem)
+            }
+          }
+          return combined
+        })
+        
+        // 진행률 업데이트
+        processedPages += batch.length
+        setCurrentItem(processedPages)
+        setProgress((processedPages / totalPages) * 100)
+        
+        // 배치 간 딜레이 (마지막 배치가 아닌 경우)
+        if (processedPages < totalPages) {
+          await new Promise(resolve => setTimeout(resolve, delay))
         }
       }
       
@@ -279,9 +278,12 @@ export default function AnalysisPage() {
     }
   }
 
-  // CSV 다운로드
+  // CSV 다운로드 - 즉시 다운로드
   const downloadCSV = () => {
-    if (items.length === 0) return
+    if (items.length === 0) {
+      alert('다운로드할 데이터가 없습니다.')
+      return
+    }
 
     const BOM = '\uFEFF'
     const headers = ['번호', '제목', 'URL', '채널']
@@ -296,10 +298,19 @@ export default function AnalysisPage() {
     ].join('\n')
 
     const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
+    
+    link.href = url
     link.download = `naver_analysis_${new Date().toISOString().slice(0, 10)}.csv`
+    link.style.display = 'none'
+    
+    document.body.appendChild(link)
     link.click()
+    document.body.removeChild(link)
+    
+    // 메모리 정리
+    URL.revokeObjectURL(url)
   }
 
   // 서비스별 통계 계산
@@ -478,9 +489,6 @@ export default function AnalysisPage() {
                   <span>{Math.round(progress)}%</span>
                 </div>
                 <Progress value={progress} className="w-full" />
-                <p className="text-xs text-gray-500 text-center">
-                  항목 {currentItem}/{totalItems} 분석 중...
-                </p>
               </div>
             )}
           </CardContent>
