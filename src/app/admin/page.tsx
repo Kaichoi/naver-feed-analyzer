@@ -158,14 +158,20 @@ export default function AdminPage() {
     if (!user) return
     
     try {
+      console.log('관리자 권한 확인 시작:', user.id, user.email)
+      
       const adminStatus = await db.isAdmin(user.id)
+      console.log('관리자 상태:', adminStatus)
+      
       setIsAdmin(adminStatus)
       
       if (!adminStatus) {
+        console.log('관리자 권한 없음 - 홈으로 리다이렉트')
         router.push('/')
         return
       }
       
+      console.log('관리자 권한 확인됨 - 데이터 로드 시작')
       await loadAdminData()
     } catch (error) {
       console.error('관리자 권한 확인 오류:', error)
