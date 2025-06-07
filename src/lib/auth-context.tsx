@@ -1,5 +1,6 @@
 'use client'
 
+// Force rebuild - 타임아웃 완전 제거됨
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { supabase } from './supabase'
 import type { User as SupabaseUser } from '@supabase/supabase-js'
