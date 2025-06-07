@@ -120,34 +120,14 @@ export const auth = {
     if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
     
     try {
-      // 먼저 현재 세션 확인
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      // 직접 세션 확인 (타임아웃 없음)
+      const { data: { session }, error } = await supabase.auth.getSession()
       
-      if (sessionError) {
-        console.warn('세션 확인 오류:', sessionError.message)
+      if (error || !session?.user) {
         return null
       }
-
-      if (!session) {
-        return null
-      }
-
-      // 세션이 있으면 사용자 정보 가져오기
-      const { data: { user }, error: userError } = await supabase.auth.getUser()
       
-      if (userError) {
-        // 토큰 관련 오류 시 세션 정리
-        if (userError.message.includes('Invalid Refresh Token') || 
-            userError.message.includes('Refresh Token Not Found') ||
-            userError.message.includes('JWT expired')) {
-          console.warn('토큰 만료 또는 오류로 인한 자동 로그아웃:', userError.message)
-          await supabase.auth.signOut()
-          return null
-        }
-        throw userError
-      }
-      
-      return user
+      return session.user
     } catch (error) {
       console.error('사용자 정보 조회 오류:', error)
       return null

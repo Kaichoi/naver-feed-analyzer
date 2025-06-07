@@ -25,7 +25,8 @@ import {
   Download,
   Eye
 } from 'lucide-react'
-import { auth, db, type CrawlJob } from '@/lib/supabase'
+import { db, type CrawlJob } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth-context'
 
 interface User {
   id: string
@@ -37,32 +38,20 @@ interface User {
 
 export default function DashboardPage() {
   const router = useRouter()
-  const [user, setUser] = useState<User | null>(null)
+  const { user, loading, signOut } = useAuth()
   const [jobs, setJobs] = useState<CrawlJob[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [isCreatingJob, setIsCreatingJob] = useState(false)
 
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const currentUser = await auth.getCurrentUser()
-        if (!currentUser) {
-          router.push('/login')
-          return
-        }
-        
-        setUser(currentUser)
-        await loadJobs(currentUser.id)
-      } catch (error) {
-        console.error('인증 확인 오류:', error)
+    if (!loading) {
+      if (!user) {
         router.push('/login')
-      } finally {
-        setIsLoading(false)
+        return
       }
+      
+      loadJobs(user.id)
     }
-
-    initAuth()
-  }, [router])
+  }, [user, loading, router])
 
   const loadJobs = async (userId: string) => {
     try {
@@ -70,15 +59,6 @@ export default function DashboardPage() {
       setJobs(userJobs)
     } catch (error) {
       console.error('작업 목록 로드 오류:', error)
-    }
-  }
-
-  const handleSignOut = async () => {
-    try {
-      await auth.signOut()
-      router.push('/')
-    } catch (error) {
-      console.error('로그아웃 오류:', error)
     }
   }
 
@@ -137,7 +117,7 @@ export default function DashboardPage() {
     })
   }
 
-  if (isLoading) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -168,7 +148,7 @@ export default function DashboardPage() {
                   {user?.user_metadata?.full_name || user?.email || '사용자'}
                 </span>
               </div>
-              <Button onClick={handleSignOut} variant="ghost" size="sm">
+              <Button onClick={signOut} variant="ghost" size="sm">
                 <LogOut className="h-4 w-4 mr-2" />
                 로그아웃
               </Button>

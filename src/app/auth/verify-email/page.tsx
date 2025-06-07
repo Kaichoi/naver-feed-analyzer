@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, Mail, CheckCircle, RefreshCw } from 'lucide-react'
-import { auth } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 
 function VerifyEmailContent() {
   const router = useRouter()
@@ -22,8 +22,10 @@ function VerifyEmailContent() {
     // 이미 로그인된 사용자가 있는지 확인
     const checkAuth = async () => {
       try {
-        const user = await auth.getCurrentUser()
-        if (user && user.email_confirmed_at) {
+        if (!supabase) return
+        
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user && session.user.email_confirmed_at) {
           // 이미 인증된 사용자는 분석 페이지로 리다이렉트
           router.push('/analysis')
         }

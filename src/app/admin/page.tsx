@@ -1,14 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { db, type Profile } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth-context'
-import { db } from '@/lib/supabase'
 
 interface AdminStats {
   totalUsers: number
   totalAnalyses: number
-  todayAnalyses: number
+  activeToday: number
 }
 
 interface UserProfile {
@@ -26,36 +26,44 @@ export default function AdminPage() {
   const router = useRouter()
   const [isAdmin, setIsAdmin] = useState(false)
   const [isChecking, setIsChecking] = useState(true)
-  const [stats, setStats] = useState<AdminStats>({ totalUsers: 0, totalAnalyses: 0, todayAnalyses: 0 })
+  const [stats, setStats] = useState<AdminStats>({
+    totalUsers: 0,
+    totalAnalyses: 0,
+    activeToday: 0
+  })
   const [users, setUsers] = useState<UserProfile[]>([])
 
   useEffect(() => {
-    const checkAdminStatus = async () => {
+    if (!loading) {
       if (!user) {
         router.push('/login')
         return
       }
+      
+      checkAdminPermission()
+    }
+  }, [user, loading, router, checkAdminPermission])
 
-      try {
-        const adminStatus = await db.isAdmin(user.id)
-        if (!adminStatus) {
-          router.push('/')
-          return
-        }
-        setIsAdmin(true)
-        await loadAdminData()
-      } catch (error) {
-        console.error('관리자 권한 확인 오류:', error)
+  const checkAdminPermission = async () => {
+    if (!user) return
+    
+    try {
+      const adminStatus = await db.isAdmin(user.id)
+      setIsAdmin(adminStatus)
+      
+      if (!adminStatus) {
         router.push('/')
-      } finally {
-        setIsChecking(false)
+        return
       }
+      
+      await loadAdminData()
+    } catch (error) {
+      console.error('관리자 권한 확인 오류:', error)
+      router.push('/')
+    } finally {
+      setIsChecking(false)
     }
-
-    if (!loading) {
-      checkAdminStatus()
-    }
-  }, [user, loading, router])
+  }
 
   const loadAdminData = async () => {
     try {
@@ -71,7 +79,7 @@ export default function AdminPage() {
         p.last_analysis_at && p.last_analysis_at.startsWith(today)
       ).length
 
-      setStats({ totalUsers, totalAnalyses, todayAnalyses })
+      setStats({ totalUsers, totalAnalyses, activeToday: todayAnalyses })
       setUsers(profiles)
     } catch (error) {
       console.error('관리자 데이터 로드 오류:', error)
@@ -124,7 +132,7 @@ export default function AdminPage() {
           </div>
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="text-lg font-medium text-gray-900">오늘 분석</h3>
-            <p className="text-3xl font-bold text-purple-600">{stats.todayAnalyses}</p>
+            <p className="text-3xl font-bold text-purple-600">{stats.activeToday}</p>
           </div>
         </div>
 
