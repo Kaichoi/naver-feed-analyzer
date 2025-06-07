@@ -114,7 +114,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { sessionId, page = 1 } = await request.json()
+    const { sessionId, page = 1, nextCursor, adAfterCardsCount, adNextSeq } = await request.json()
 
     if (!sessionId) {
       return NextResponse.json({ error: 'sessionId is required' }, { status: 400 })
@@ -125,6 +125,11 @@ export async function POST(request: NextRequest) {
       sessionId,
       page: page.toString(),
     })
+
+    // NextCursor 파라미터들 추가 (파이썬과 동일)
+    if (nextCursor) params.append('nextCursor', nextCursor)
+    if (adAfterCardsCount) params.append('adAfterCardsCount', adAfterCardsCount.toString())
+    if (adNextSeq) params.append('adNextSeq', adNextSeq.toString())
 
     const response = await fetch(`${url}?${params}`, {
       headers: {
@@ -140,6 +145,12 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json()
+    
+    // NextCursor 파라미터 추출
+    const pageInfo = data?.pageInfo || {}
+    const nextCursorResponse = pageInfo.nextCursor
+    const adAfterCardsCountResponse = pageInfo.adAfterCardsCount
+    const adNextSeqResponse = pageInfo.adNextSeq
     
     // 데이터 처리
     const cards = data?.cards || []
@@ -160,7 +171,7 @@ export async function POST(request: NextRequest) {
       
       if (!title || !url || !service) continue
       
-      // 인플루언서 콘텐츠 처리
+      // 인플루언서 콘텐츠 처리 (파이썬과 동일한 패턴)
       if (/https:\/\/in\.naver\.com\/[^/]+\/contents\/internal\/\d+/.test(url)) {
         service = "INFL"
       }
@@ -177,7 +188,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ 
       items,
       totalCards: cards.length,
-      hasMore: cards.length > 0
+      hasMore: cards.length > 0,
+      // NextCursor 파라미터들 응답에 포함
+      nextCursor: nextCursorResponse,
+      adAfterCardsCount: adAfterCardsCountResponse,
+      adNextSeq: adNextSeqResponse
     })
 
   } catch (error) {

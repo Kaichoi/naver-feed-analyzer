@@ -164,9 +164,16 @@ export default function AnalysisPage() {
       if (!isAdmin) return
     }
 
-    try {
-      // 일반 사용자만 통계 업데이트 (관리자는 제외)
-      if (!isAdmin) {
+    // 분석 시작 시간 저장 및 통계 업데이트
+    const now = Date.now()
+    setAnalysisRestriction(prev => ({
+      ...prev,
+      timeLeft: now + 60 * 60 * 1000
+    }))
+
+    // 일반 사용자만 통계 업데이트 (관리자는 제외)
+    if (!isAdmin) {
+      try {
         await db.updateAnalysisStats(user.id)
         // 로컬 상태도 업데이트
         setUserStats(prev => ({
@@ -175,28 +182,9 @@ export default function AnalysisPage() {
         }))
         // 권한 재확인
         await checkAnalysisPermission()
+      } catch (error) {
+        console.error('분석 통계 업데이트 오류:', error)
       }
-    } catch (error) {
-      console.error('분석 통계 업데이트 오류:', error)
-    }
-
-    // 분석 시작 시간 저장 및 통계 업데이트
-    const now = Date.now()
-    setAnalysisRestriction(prev => ({
-      ...prev,
-      timeLeft: now + 60 * 60 * 1000
-    }))
-
-    try {
-      // 데이터베이스에 분석 통계 업데이트
-      await db.updateAnalysisStats(user.id)
-      // 로컬 상태도 업데이트
-      setUserStats(prev => ({
-        lastAnalysisAt: new Date().toISOString(),
-        totalAnalysisCount: prev.totalAnalysisCount + 1
-      }))
-    } catch (error) {
-      console.error('분석 통계 업데이트 오류:', error)
     }
 
     setIsCrawling(true)
@@ -207,85 +195,77 @@ export default function AnalysisPage() {
     try {
       const sessionId = 'spGLaNSR5qMlh35F'
       const maxScanCount = 15 // 스캔 횟수
-      const delay = 800 // 딜레이 단축
-      const batchSize = 3 // 동시 요청 수
+      const delay = 1500 // 파이썬과 동일한 딜레이 (1.5초)
       
-      // 배치 단위로 병렬 처리
-      for (let batchStart = 1; batchStart <= maxScanCount; batchStart += batchSize) {
-        const batchEnd = Math.min(batchStart + batchSize - 1, maxScanCount)
-        const batchItems = Array.from(
-          { length: batchEnd - batchStart + 1 }, 
-          (_, i) => batchStart + i
-        )
+      let nextCursor: string | undefined
+      let adAfterCardsCount: number | undefined
+      let adNextSeq: number | undefined
+      
+      // 순차 처리 (파이썬과 동일)
+      for (let page = 1; page <= maxScanCount; page++) {
+        setCurrentItem(page)
+        setProgress((page / maxScanCount) * 100)
         
-        // 현재 배치의 모든 요청을 병렬로 처리
-        const batchPromises = batchItems.map(async (scanIndex) => {
-          try {
-            const response = await fetch('/api/crawl', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ sessionId, page: scanIndex }),
-            })
-            
-            if (!response.ok) {
-              console.warn(`스캔 ${scanIndex} 요청 실패:`, response.status)
-              return { scanIndex, items: [], hasMore: false, error: true }
-            }
-            
-            const result = await response.json()
-            
-            if (result.error) {
-              console.warn(`스캔 ${scanIndex} 오류:`, result.error)
-              return { scanIndex, items: [], hasMore: false, error: true }
-            }
-            
-            return { scanIndex, items: result.items || [], hasMore: result.hasMore, error: false }
-            
-          } catch (error) {
-            console.error(`스캔 ${scanIndex} 처리 중 오류:`, error)
-            return { scanIndex, items: [], hasMore: false, error: true }
-          }
-        })
-        
-        // 배치 결과 기다리기
-        const batchResults = await Promise.all(batchPromises)
-        
-        // 결과 처리
-        let shouldStop = false
-        for (const result of batchResults.sort((a, b) => a.scanIndex - b.scanIndex)) {
-          setCurrentItem(result.scanIndex)
-          setProgress((result.scanIndex / maxScanCount) * 100)
+        try {
+          const response = await fetch('/api/crawl', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+              sessionId, 
+              page,
+              nextCursor,
+              adAfterCardsCount,
+              adNextSeq
+            }),
+          })
           
-          if (!result.error && result.items.length > 0) {
-            // 새로운 아이템들 추가 (중복 제거)
-            setItems(prev => {
-              const newItems = [...prev]
-              for (const newItem of result.items) {
-                if (!newItems.some(existingItem => existingItem.url === newItem.url)) {
-                  newItems.push(newItem)
-                }
-              }
-              return newItems
-            })
-            
-            // 더 이상 데이터가 없으면 종료 플래그 설정
-            if (!result.hasMore) {
-              shouldStop = true
-            }
+          if (!response.ok) {
+            console.warn(`스캔 ${page} 요청 실패:`, response.status)
+            continue
           }
-        }
-        
-        // 조기 종료 조건
-        if (shouldStop) {
-          console.log(`스캔 ${batchEnd}에서 데이터가 더 이상 없어 분석 종료`)
-          break
-        }
-        
-        // 배치 간 딜레이 (마지막 배치가 아닌 경우에만)
-        if (batchEnd < maxScanCount) {
-          await new Promise(resolve => setTimeout(resolve, delay))
+          
+          const result = await response.json()
+          
+          if (result.error) {
+            console.warn(`스캔 ${page} 오류:`, result.error)
+            continue
+          }
+          
+          // NextCursor 파라미터 업데이트
+          nextCursor = result.nextCursor
+          adAfterCardsCount = result.adAfterCardsCount  
+          adNextSeq = result.adNextSeq
+          
+          const pageItems = result.items || []
+          
+          // 한 페이지에서 아이템이 없으면 종료 (파이썬과 동일)
+          if (pageItems.length === 0) {
+            console.log(`페이지 ${page}에서 데이터가 없어 분석 종료`)
+            break
+          }
+          
+          // 새로운 아이템들 추가 (중복 제거)
+          setItems(prev => {
+            const newItems = [...prev]
+            for (const newItem of pageItems) {
+              if (!newItems.some(existingItem => existingItem.url === newItem.url)) {
+                newItems.push(newItem)
+              }
+            }
+            return newItems
+          })
+          
+          // 마지막 페이지가 아니면 딜레이
+          if (page < maxScanCount) {
+            await new Promise(resolve => setTimeout(resolve, delay))
+          }
+          
+        } catch (error) {
+          console.error(`스캔 ${page} 처리 중 오류:`, error)
+          // 오류 시 해당 페이지만 건너뛰고 계속 진행
+          continue
         }
       }
       
@@ -447,7 +427,7 @@ export default function AnalysisPage() {
                 {isCrawling ? (
                   <>
                     <Square className="h-4 w-4 mr-2" />
-                    분석 중... ({currentItem}/{totalItems})
+                    분석 중...
                   </>
                 ) : !canStartAnalysis() ? (
                   <>
