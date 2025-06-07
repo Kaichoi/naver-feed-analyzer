@@ -74,7 +74,12 @@ export default function AdminPage() {
 
   const loadAdminData = useCallback(async () => {
     try {
-      const profiles = await db.getAllProfiles()
+      // 새로운 API를 통해 모든 데이터 가져오기
+      const debugData = await db.getUsersDebugInfo()
+      setDebugInfo(debugData)
+      
+      // API에서 가져온 프로필 데이터를 메인 데이터로 사용
+      const profiles = debugData.profiles || []
       
       const totalUsers = profiles.length
       const totalAnalyses = profiles.reduce((sum: number, p: UserProfile) => sum + p.total_analysis_count, 0)
@@ -127,30 +132,26 @@ export default function AdminPage() {
         activeThisMonth,
         adminCount 
       })
-      setUsers(profiles)
+      setUsers(profiles) // API에서 가져온 전체 프로필 데이터 사용
       setDailyStats(recentStats)
+      
+      // 동기화 상태 업데이트
+      setSyncStatus({
+        total: debugData.summary.totalAuthUsers || 0,
+        missing: debugData.summary.missingProfiles || 0,
+        syncing: false
+      })
 
-      // 서버 API를 통한 디버깅 정보 로드
-      try {
-        const debugData = await db.getUsersDebugInfo()
-        setDebugInfo(debugData)
-        
-        setSyncStatus({
-          total: debugData.summary.totalAuthUsers || 0,
-          missing: debugData.summary.missingProfiles || 0,
-          syncing: false
-        })
-      } catch (debugError) {
-        console.error('디버깅 정보 로드 실패:', debugError)
-        setDebugInfo({
-          authUsers: [],
-          profiles: [],
-          summary: {},
-          error: debugError instanceof Error ? debugError.message : 'Unknown error'
-        })
-      }
     } catch (error) {
       console.error('관리자 데이터 로드 오류:', error)
+      
+      // 오류 시 빈 상태로 설정
+      setDebugInfo({
+        authUsers: [],
+        profiles: [],
+        summary: {},
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
     }
   }, [])
 
