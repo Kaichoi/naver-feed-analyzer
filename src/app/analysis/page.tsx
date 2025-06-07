@@ -171,19 +171,24 @@ export default function AnalysisPage() {
       timeLeft: now + 60 * 60 * 1000
     }))
 
-    // 일반 사용자만 통계 업데이트 (관리자는 제외)
+    // 분석 시간 업데이트 (관리자 포함)
+    try {
+      await db.updateAnalysisStats(user.id)
+      // 로컬 상태도 업데이트
+      setUserStats(prev => ({
+        lastAnalysisAt: new Date().toISOString(),
+        totalAnalysisCount: prev.totalAnalysisCount + 1
+      }))
+    } catch (error) {
+      console.error('분석 통계 업데이트 오류:', error)
+    }
+
+    // 일반 사용자만 권한 재확인 (관리자는 제외)
     if (!isAdmin) {
       try {
-        await db.updateAnalysisStats(user.id)
-        // 로컬 상태도 업데이트
-        setUserStats(prev => ({
-          lastAnalysisAt: new Date().toISOString(),
-          totalAnalysisCount: prev.totalAnalysisCount + 1
-        }))
-        // 권한 재확인
         await checkAnalysisPermission()
       } catch (error) {
-        console.error('분석 통계 업데이트 오류:', error)
+        console.error('권한 재확인 오류:', error)
       }
     }
 
