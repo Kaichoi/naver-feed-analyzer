@@ -61,25 +61,32 @@ export default function AnalysisPage() {
   const [filterService, setFilterService] = useState<string>('all')
   
   // Rate Limiting 상태
-  const [lastAnalysisTime, setLastAnalysisTime] = useState<number | null>(null)
-  const [timeUntilNext, setTimeUntilNext] = useState<number>(0)
+  const [canAnalyze, setCanAnalyze] = useState(true)
+  const [analysisRestriction, setAnalysisRestriction] = useState<{
+    canAnalyze: boolean
+    reason?: string
+    timeLeft?: number
+  }>({ canAnalyze: true })
+  const [isAdmin, setIsAdmin] = useState(false)
 
-  // Rate Limiting 체크
-  const checkLastAnalysisTime = useCallback(() => {
-    const lastTime = localStorage.getItem('lastAnalysisTime')
-    if (lastTime) {
-      const lastAnalysis = parseInt(lastTime)
-      setLastAnalysisTime(lastAnalysis)
-      
-      const now = Date.now()
-      const oneHour = 60 * 60 * 1000 // 1시간
-      const timeDiff = now - lastAnalysis
-      
-      if (timeDiff < oneHour) {
-        setTimeUntilNext(oneHour - timeDiff)
-      }
+  // 분석 가능 여부 체크
+  const checkAnalysisPermission = useCallback(async () => {
+    if (!user) return
+
+    try {
+      // 관리자 권한 확인
+      const adminStatus = await db.isAdmin(user.id)
+      setIsAdmin(adminStatus)
+
+      // 분석 가능 여부 확인
+      const permission = await db.canAnalyze(user.id)
+      setAnalysisRestriction(permission)
+      setCanAnalyze(permission.canAnalyze)
+    } catch (error) {
+      console.error('분석 권한 확인 오류:', error)
+      setCanAnalyze(false)
     }
-  }, [])
+  }, [user])
 
   const loadUserStats = useCallback(async () => {
     if (!user) return
@@ -100,27 +107,22 @@ export default function AnalysisPage() {
     if (!loading && !user) {
       router.push('/login')
     } else if (user) {
-      // Rate Limiting 체크
-      checkLastAnalysisTime()
-      // 사용자 통계 로드
+      // 분석 권한 및 사용자 통계 로드
+      checkAnalysisPermission()
       loadUserStats()
     }
-  }, [user, loading, router, checkLastAnalysisTime, loadUserStats])
+  }, [user, loading, router, checkAnalysisPermission, loadUserStats])
 
   // Rate Limiting 체크 (분석 시작 전)
   const canStartAnalysis = () => {
-    if (!lastAnalysisTime) return true
-    
-    const now = Date.now()
-    const oneHour = 60 * 60 * 1000
-    const timeDiff = now - lastAnalysisTime
-    
-    return timeDiff >= oneHour
+    return canAnalyze && analysisRestriction.canAnalyze
   }
 
   // 남은 시간 포맷팅
-  const formatTimeRemaining = (ms: number) => {
-    const minutes = Math.ceil(ms / (1000 * 60))
+  const formatTimeRemaining = (timeLeft?: number) => {
+    if (!timeLeft || timeLeft <= 0) return '0분'
+    
+    const minutes = Math.ceil(timeLeft / (1000 * 60))
     const hours = Math.floor(minutes / 60)
     const remainingMinutes = minutes % 60
     
@@ -132,37 +134,58 @@ export default function AnalysisPage() {
 
   // 실시간 타이머 업데이트
   useEffect(() => {
-    if (timeUntilNext > 0) {
+    if (analysisRestriction.timeLeft && analysisRestriction.timeLeft > 0) {
       const timer = setInterval(() => {
-        setTimeUntilNext(prev => {
-          const newTime = prev - 1000
-          if (newTime <= 0) {
-            clearInterval(timer)
-            return 0
+        setAnalysisRestriction(prev => {
+          const newTimeLeft = (prev.timeLeft || 0) - 1000
+          if (newTimeLeft <= 0) {
+            // 시간이 만료되면 권한 재확인
+            checkAnalysisPermission()
+            return { ...prev, timeLeft: 0 }
           }
-          return newTime
+          return { ...prev, timeLeft: newTimeLeft }
         })
       }, 1000)
       
       return () => clearInterval(timer)
     }
-  }, [timeUntilNext])
+  }, [analysisRestriction.timeLeft, checkAnalysisPermission])
 
   // 크롤링 시작 (서버 API 사용) - 성능 최적화
   const startCrawling = async () => {
     if (!user) return
     
-    // Rate Limiting 체크
+    // 서버 기반 권한 체크
     if (!canStartAnalysis()) {
-      alert(`분석은 시간당 1회만 가능합니다.\n다음 분석까지 ${formatTimeRemaining(timeUntilNext)} 남았습니다.`)
-      return
+      const message = isAdmin 
+        ? '관리자는 언제든지 분석 가능합니다.' 
+        : `${analysisRestriction.reason || '분석 제한 중입니다.'}\n${analysisRestriction.timeLeft ? `다음 분석까지 ${formatTimeRemaining(analysisRestriction.timeLeft)} 남았습니다.` : ''}`
+      alert(message)
+      if (!isAdmin) return
+    }
+
+    try {
+      // 일반 사용자만 통계 업데이트 (관리자는 제외)
+      if (!isAdmin) {
+        await db.updateAnalysisStats(user.id)
+        // 로컬 상태도 업데이트
+        setUserStats(prev => ({
+          lastAnalysisAt: new Date().toISOString(),
+          totalAnalysisCount: prev.totalAnalysisCount + 1
+        }))
+        // 권한 재확인
+        await checkAnalysisPermission()
+      }
+    } catch (error) {
+      console.error('분석 통계 업데이트 오류:', error)
     }
 
     // 분석 시작 시간 저장 및 통계 업데이트
     const now = Date.now()
-    localStorage.setItem('lastAnalysisTime', now.toString())
-    setLastAnalysisTime(now)
-    setTimeUntilNext(60 * 60 * 1000) // 1시간
+    setAnalysisRestriction(prev => ({
+      ...prev,
+      timeLeft: now + 60 * 60 * 1000
+    }))
 
     try {
       // 데이터베이스에 분석 통계 업데이트
@@ -385,6 +408,11 @@ export default function AnalysisPage() {
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <User className="h-4 w-4" />
                 {user?.user_metadata?.full_name || user?.email || '사용자'}
+                {isAdmin && (
+                  <Badge variant="default" className="ml-2 bg-purple-600">
+                    관리자
+                  </Badge>
+                )}
               </div>
               <Button variant="outline" size="sm" onClick={signOut}>
                 <LogOut className="h-4 w-4 mr-1" />
@@ -424,7 +452,7 @@ export default function AnalysisPage() {
                 ) : !canStartAnalysis() ? (
                   <>
                     <Clock className="h-4 w-4 mr-2" />
-                    대기 중 ({formatTimeRemaining(timeUntilNext)})
+                    대기 중 ({formatTimeRemaining(analysisRestriction.timeLeft || 0)})
                   </>
                 ) : (
                   <>
@@ -446,10 +474,18 @@ export default function AnalysisPage() {
             </div>
 
             {/* Rate Limiting 안내 */}
-            {!canStartAnalysis() && (
+            {!isAdmin && !analysisRestriction.canAnalyze && analysisRestriction.timeLeft && analysisRestriction.timeLeft > 0 && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                 <p className="text-sm text-yellow-800">
-                  ⏰ 분석은 시간당 1회만 가능합니다. 다음 분석까지 <strong>{formatTimeRemaining(timeUntilNext)}</strong> 남았습니다.
+                  ⏰ {analysisRestriction.reason} 다음 분석까지 <strong>{formatTimeRemaining(analysisRestriction.timeLeft)}</strong> 남았습니다.
+                </p>
+              </div>
+            )}
+            
+            {isAdmin && (
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                <p className="text-sm text-purple-800">
+                  👑 관리자는 시간 제한 없이 언제든지 분석을 실행할 수 있습니다.
                 </p>
               </div>
             )}

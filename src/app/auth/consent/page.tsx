@@ -78,6 +78,7 @@ export default function ConsentPage() {
         full_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
         avatar_url: user.user_metadata?.avatar_url || null,
         marketing_consent: marketingConsent,
+        is_admin: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         last_analysis_at: null,

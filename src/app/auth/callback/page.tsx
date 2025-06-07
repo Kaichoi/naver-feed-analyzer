@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase, db } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 
 export default function AuthCallback() {
   const router = useRouter()
@@ -92,20 +92,43 @@ export default function AuthCallback() {
     const handleUserProfile = async (userId: string) => {
       try {
         setStatus('프로필 확인 중...')
-        const existingProfile = await db.getProfile(userId)
         
-        if (existingProfile) {
+        if (!supabase) {
+          console.error('Supabase 클라이언트가 초기화되지 않음')
+          setError('서비스 초기화 중 문제가 발생했습니다.')
+          return
+        }
+        
+        // 프로필 조회를 더 명시적으로 처리
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle()
+        
+        console.log('🔍 프로필 조회 결과:', { profile, error, userId })
+        
+        if (error) {
+          console.error('프로필 조회 중 데이터베이스 오류:', error)
+          // 오류 발생 시 신규 사용자로 간주
+          console.log('🆕 데이터베이스 오류로 인해 신규 사용자로 처리')
+          router.push('/auth/consent')
+          return
+        }
+        
+        if (profile) {
           // 기존 사용자
-          console.log('기존 사용자 - 분석 페이지로 이동')
+          console.log('✅ 기존 사용자 - 분석 페이지로 이동')
           router.push('/analysis')
         } else {
           // 신규 사용자
-          console.log('신규 사용자 - 동의 페이지로 이동')
+          console.log('🆕 신규 사용자 - 동의 페이지로 이동')
           router.push('/auth/consent')
         }
       } catch (error) {
         // 프로필 조회 실패 시 신규 사용자로 간주
-        console.log('프로필 조회 실패 - 신규 사용자로 처리:', error)
+        console.error('프로필 조회 실패:', error)
+        console.log('🆕 프로필 조회 실패로 인해 신규 사용자로 처리')
         router.push('/auth/consent')
       }
     }

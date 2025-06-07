@@ -91,6 +91,7 @@ export interface Profile {
   last_analysis_at: string | null
   total_analysis_count: number
   marketing_consent: boolean
+  is_admin: boolean
 }
 
 export interface CrawlJob {
@@ -257,6 +258,98 @@ export const db = {
     
     if (error) throw error
     return data
+  },
+
+  // 모든 사용자 프로필 가져오기 (관리자용)
+  async getAllProfiles(): Promise<Profile[]> {
+    if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (error) throw error
+    return data || []
+  },
+
+  // 사용자 프로필 업데이트 (관리자용)
+  async updateProfile(userId: string, updates: Partial<Profile>) {
+    if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(updates)
+      .eq('id', userId)
+      .select()
+      .single()
+    
+    if (error) throw error
+    return data
+  },
+
+  // 관리자 권한 확인
+  async isAdmin(userId: string): Promise<boolean> {
+    if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('is_admin')
+        .eq('id', userId)
+        .single()
+      
+      if (error) return false
+      return data?.is_admin || false
+    } catch (error) {
+      console.error('관리자 권한 확인 오류:', error)
+      return false
+    }
+  },
+
+  // 분석 가능 여부 확인 (관리자는 시간 제한 없음)
+  async canAnalyze(userId: string): Promise<{ canAnalyze: boolean; reason?: string; timeLeft?: number }> {
+    if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    
+    try {
+      // 관리자 권한 확인
+      const isUserAdmin = await this.isAdmin(userId)
+      if (isUserAdmin) {
+        return { canAnalyze: true }
+      }
+
+      // 일반 사용자 시간 제한 확인
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('last_analysis_at')
+        .eq('id', userId)
+        .single()
+      
+      if (error) {
+        // 프로필이 없으면 분석 가능
+        return { canAnalyze: true }
+      }
+      
+      if (!data.last_analysis_at) {
+        // 첫 분석이면 가능
+        return { canAnalyze: true }
+      }
+      
+      const lastAnalysis = new Date(data.last_analysis_at)
+      const now = new Date()
+      const hoursSinceLastAnalysis = (now.getTime() - lastAnalysis.getTime()) / (1000 * 60 * 60)
+      
+      if (hoursSinceLastAnalysis >= 1) {
+        return { canAnalyze: true }
+      } else {
+        const timeLeft = Math.ceil((1 - hoursSinceLastAnalysis) * 60) // 분 단위
+        return { 
+          canAnalyze: false, 
+          reason: `1시간에 1회만 분석 가능합니다.`,
+          timeLeft 
+        }
+      }
+    } catch (error) {
+      console.error('분석 가능 여부 확인 오류:', error)
+      return { canAnalyze: false, reason: '권한 확인 중 오류가 발생했습니다.' }
+    }
   },
 
   // 분석 통계 업데이트
