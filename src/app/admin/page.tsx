@@ -60,6 +60,11 @@ export default function AdminPage() {
   })
   const [users, setUsers] = useState<UserProfile[]>([])
   const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
+  const [syncStatus, setSyncStatus] = useState<{
+    total: number
+    missing: number
+    syncing: boolean
+  }>({ total: 0, missing: 0, syncing: false })
 
   const loadAdminData = useCallback(async () => {
     try {
@@ -118,6 +123,21 @@ export default function AdminPage() {
       })
       setUsers(profiles)
       setDailyStats(recentStats)
+
+      // 동기화 상태 확인
+      try {
+        const authUsers = await db.getAllAuthUsers()
+        const profileIds = new Set(profiles.map(p => p.id))
+        const missingCount = authUsers.filter(user => !profileIds.has(user.id)).length
+        
+        setSyncStatus({
+          total: authUsers.length,
+          missing: missingCount,
+          syncing: false
+        })
+      } catch (syncError) {
+        console.warn('동기화 상태 확인 실패:', syncError)
+      }
     } catch (error) {
       console.error('관리자 데이터 로드 오류:', error)
     }
@@ -152,6 +172,30 @@ export default function AdminPage() {
     } catch (error) {
       console.error('관리자 권한 변경 오류:', error)
       alert('권한 변경 중 오류가 발생했습니다.')
+    }
+  }, [loadAdminData])
+
+  const syncMissingProfiles = useCallback(async () => {
+    setSyncStatus(prev => ({ ...prev, syncing: true }))
+    
+    try {
+      const result = await db.syncMissingProfiles()
+      
+      if (result.synced > 0) {
+        alert(`${result.synced}명의 사용자 프로필을 성공적으로 동기화했습니다.`)
+        await loadAdminData() // 데이터 새로고침
+      } else {
+        alert('동기화할 사용자가 없습니다. 모든 사용자의 프로필이 존재합니다.')
+      }
+      
+      if (result.failed && result.failed > 0) {
+        alert(`주의: ${result.failed}명의 사용자 프로필 생성에 실패했습니다.`)
+      }
+    } catch (error) {
+      console.error('동기화 오류:', error)
+      alert('사용자 동기화 중 오류가 발생했습니다.')
+    } finally {
+      setSyncStatus(prev => ({ ...prev, syncing: false }))
     }
   }, [loadAdminData])
 
@@ -387,79 +431,140 @@ export default function AdminPage() {
 
         {/* Users Tab */}
         {activeTab === 'users' && (
-          <Card>
-            <CardHeader>
-              <CardTitle>사용자 관리</CardTitle>
-              <CardDescription>
-                총 {users.length}명의 사용자 (관리자 {stats.adminCount}명)
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b text-left">
-                      <th className="p-4 font-medium">사용자</th>
-                      <th className="p-4 font-medium">분석 횟수</th>
-                      <th className="p-4 font-medium">마지막 분석</th>
-                      <th className="p-4 font-medium">가입일</th>
-                      <th className="p-4 font-medium">권한</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.map((userProfile) => (
-                      <tr key={userProfile.id} className="border-b hover:bg-gray-50">
-                        <td className="p-4">
-                          <div className="flex flex-col">
-                            <div className="font-medium text-gray-900">
-                              {userProfile.full_name || '이름 없음'}
-                            </div>
-                            <div className="text-sm text-gray-500">{userProfile.email}</div>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          <Badge variant="outline">
-                            {userProfile.total_analysis_count}회
-                          </Badge>
-                        </td>
-                        <td className="p-4 text-sm text-gray-600">
-                          {userProfile.last_analysis_at 
-                            ? new Date(userProfile.last_analysis_at).toLocaleDateString('ko-KR', {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })
-                            : '없음'
-                          }
-                        </td>
-                        <td className="p-4 text-sm text-gray-600">
-                          {new Date(userProfile.created_at).toLocaleDateString('ko-KR')}
-                        </td>
-                        <td className="p-4">
-                          <Button
-                            onClick={() => toggleAdminStatus(userProfile.id, userProfile.is_admin)}
-                            variant={userProfile.is_admin ? "default" : "outline"}
-                            size="sm"
-                            className={userProfile.is_admin ? "bg-purple-600 hover:bg-purple-700" : ""}
-                          >
-                            {userProfile.is_admin ? (
-                              <>
-                                <Shield className="h-3 w-3 mr-1" />
-                                관리자
-                              </>
-                            ) : (
-                              '일반 사용자'
-                            )}
-                          </Button>
-                        </td>
+          <div className="space-y-6">
+            {/* 동기화 상태 카드 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  사용자 동기화 상태
+                </CardTitle>
+                <CardDescription>
+                  인증 시스템과 프로필 데이터베이스 간의 동기화 상태를 확인하고 관리합니다
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                  <div className="text-center p-4 bg-blue-50 rounded-lg">
+                    <p className="text-2xl font-bold text-blue-600">{syncStatus.total}</p>
+                    <p className="text-sm text-gray-600">총 인증 사용자</p>
+                  </div>
+                  <div className="text-center p-4 bg-green-50 rounded-lg">
+                    <p className="text-2xl font-bold text-green-600">{users.length}</p>
+                    <p className="text-sm text-gray-600">프로필 보유 사용자</p>
+                  </div>
+                  <div className="text-center p-4 bg-orange-50 rounded-lg">
+                    <p className="text-2xl font-bold text-orange-600">{syncStatus.missing}</p>
+                    <p className="text-sm text-gray-600">프로필 누락 사용자</p>
+                  </div>
+                </div>
+                
+                {syncStatus.missing > 0 && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                    <p className="text-yellow-800 text-sm">
+                      ⚠️ {syncStatus.missing}명의 사용자가 프로필 없이 인증되어 있습니다. 
+                      이는 회원가입 과정에서 프로필 생성이 실패했거나 동의 페이지를 건너뛴 경우 발생할 수 있습니다.
+                    </p>
+                  </div>
+                )}
+                
+                <div className="flex gap-3">
+                  <Button
+                    onClick={syncMissingProfiles}
+                    disabled={syncStatus.syncing || syncStatus.missing === 0}
+                    className="flex items-center gap-2"
+                  >
+                    <Users className="h-4 w-4" />
+                    {syncStatus.syncing ? '동기화 중...' : '누락 프로필 생성'}
+                  </Button>
+                  
+                  <Button
+                    onClick={loadAdminData}
+                    variant="outline"
+                    className="flex items-center gap-2"
+                  >
+                    <Activity className="h-4 w-4" />
+                    상태 새로고침
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 사용자 목록 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>사용자 관리</CardTitle>
+                <CardDescription>
+                  총 {users.length}명의 사용자 (관리자 {stats.adminCount}명)
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="p-4 font-medium">사용자</th>
+                        <th className="p-4 font-medium">분석 횟수</th>
+                        <th className="p-4 font-medium">마지막 분석</th>
+                        <th className="p-4 font-medium">가입일</th>
+                        <th className="p-4 font-medium">권한</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
+                    </thead>
+                    <tbody>
+                      {users.map((userProfile) => (
+                        <tr key={userProfile.id} className="border-b hover:bg-gray-50">
+                          <td className="p-4">
+                            <div className="flex flex-col">
+                              <div className="font-medium text-gray-900">
+                                {userProfile.full_name || '이름 없음'}
+                              </div>
+                              <div className="text-sm text-gray-500">{userProfile.email}</div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <Badge variant="outline">
+                              {userProfile.total_analysis_count}회
+                            </Badge>
+                          </td>
+                          <td className="p-4 text-sm text-gray-600">
+                            {userProfile.last_analysis_at 
+                              ? new Date(userProfile.last_analysis_at).toLocaleDateString('ko-KR', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })
+                              : '없음'
+                            }
+                          </td>
+                          <td className="p-4 text-sm text-gray-600">
+                            {new Date(userProfile.created_at).toLocaleDateString('ko-KR')}
+                          </td>
+                          <td className="p-4">
+                            <Button
+                              onClick={() => toggleAdminStatus(userProfile.id, userProfile.is_admin)}
+                              variant={userProfile.is_admin ? "default" : "outline"}
+                              size="sm"
+                              className={userProfile.is_admin ? "bg-purple-600 hover:bg-purple-700" : ""}
+                            >
+                              {userProfile.is_admin ? (
+                                <>
+                                  <Shield className="h-3 w-3 mr-1" />
+                                  관리자
+                                </>
+                              ) : (
+                                '일반 사용자'
+                              )}
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
       </div>
     </div>

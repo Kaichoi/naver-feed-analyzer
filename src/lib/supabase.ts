@@ -252,6 +252,81 @@ export const db = {
     return data || []
   },
 
+  // 모든 인증된 사용자 가져오기 (관리자용) - auth.users 테이블 조회
+  async getAllAuthUsers() {
+    if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    
+    try {
+      // admin API를 사용하여 모든 사용자 조회
+      const { data, error } = await supabase.auth.admin.listUsers()
+      
+      if (error) throw error
+      return data.users || []
+    } catch (error) {
+      console.error('인증 사용자 조회 오류:', error)
+      // 권한이 없는 경우 빈 배열 반환
+      return []
+    }
+  },
+
+  // 프로필이 없는 사용자들을 위한 자동 동기화
+  async syncMissingProfiles() {
+    if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    
+    try {
+      // 모든 인증된 사용자 가져오기
+      const authUsers = await this.getAllAuthUsers()
+      
+      // 모든 프로필 가져오기
+      const profiles = await this.getAllProfiles()
+      const profileIds = new Set(profiles.map(p => p.id))
+      
+      // 프로필이 없는 사용자들 찾기
+      const missingProfiles = authUsers.filter(user => !profileIds.has(user.id))
+      
+      if (missingProfiles.length === 0) {
+        return { synced: 0, total: authUsers.length }
+      }
+      
+      console.log(`${missingProfiles.length}명의 사용자 프로필이 누락되어 자동 생성합니다.`)
+      
+      // 누락된 프로필들 자동 생성
+      const syncPromises = missingProfiles.map(async (user) => {
+        try {
+          await this.upsertProfile({
+            id: user.id,
+            email: user.email,
+            full_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
+            avatar_url: user.user_metadata?.avatar_url || null,
+            marketing_consent: false, // 기본값
+            is_admin: false,
+            created_at: user.created_at,
+            updated_at: new Date().toISOString(),
+            last_analysis_at: null,
+            total_analysis_count: 0
+          })
+          console.log(`프로필 생성 완료: ${user.email}`)
+          return true
+        } catch (error) {
+          console.error(`프로필 생성 실패 (${user.email}):`, error)
+          return false
+        }
+      })
+      
+      const results = await Promise.all(syncPromises)
+      const syncedCount = results.filter(Boolean).length
+      
+      return { 
+        synced: syncedCount, 
+        total: authUsers.length,
+        failed: missingProfiles.length - syncedCount
+      }
+    } catch (error) {
+      console.error('프로필 동기화 오류:', error)
+      throw error
+    }
+  },
+
   // 사용자 프로필 업데이트 (관리자용)
   async updateProfile(userId: string, updates: Partial<Profile>) {
     if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
