@@ -130,7 +130,7 @@ export default function ConsentPage() {
                   className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
                 <label htmlFor="privacy-consent" className="ml-3 block text-sm font-medium text-gray-900">
-                  [필수] 개인정보 수집 및 이용 동의
+                  [필수] 개인정보 수집 및 이용에 동의합니다.
                 </label>
               </div>
               <div className="mt-3 text-xs text-gray-500 ml-7">
@@ -160,7 +160,7 @@ export default function ConsentPage() {
                   className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
                 <label htmlFor="marketing-consent" className="ml-3 block text-sm font-medium text-gray-900">
-                  [선택] 마케팅 정보 수신 동의
+                  [선택] 마케팅 및 홍보 활용에 대한 동의합니다.
                 </label>
               </div>
               <div className="mt-3 text-xs text-gray-500 ml-7">

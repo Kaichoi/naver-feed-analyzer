@@ -302,7 +302,7 @@ function LoginContent() {
                           className="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                         />
                         <label htmlFor="marketing" className="text-sm text-gray-700">
-                          <span className="text-gray-500 font-medium">[선택]</span> 이벤트 / 마케팅 활용에 동의합니다.
+                          <span className="text-gray-500 font-medium">[선택]</span> 마케팅 및 홍보 활용에 대한 동의합니다.
                         </label>
                       </div>
                     </div>
