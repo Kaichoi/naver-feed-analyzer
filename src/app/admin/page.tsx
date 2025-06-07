@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { db, type Profile } from '@/lib/supabase'
+import { db } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth-context'
 
 interface AdminStats {
@@ -33,39 +33,7 @@ export default function AdminPage() {
   })
   const [users, setUsers] = useState<UserProfile[]>([])
 
-  useEffect(() => {
-    if (!loading) {
-      if (!user) {
-        router.push('/login')
-        return
-      }
-      
-      checkAdminPermission()
-    }
-  }, [user, loading, router, checkAdminPermission])
-
-  const checkAdminPermission = async () => {
-    if (!user) return
-    
-    try {
-      const adminStatus = await db.isAdmin(user.id)
-      setIsAdmin(adminStatus)
-      
-      if (!adminStatus) {
-        router.push('/')
-        return
-      }
-      
-      await loadAdminData()
-    } catch (error) {
-      console.error('관리자 권한 확인 오류:', error)
-      router.push('/')
-    } finally {
-      setIsChecking(false)
-    }
-  }
-
-  const loadAdminData = async () => {
+  const loadAdminData = useCallback(async () => {
     try {
       // 통계 로드 (여기서는 간단하게 구현, 실제로는 RPC 함수나 aggregate 쿼리 사용)
       const profiles = await db.getAllProfiles()
@@ -84,9 +52,30 @@ export default function AdminPage() {
     } catch (error) {
       console.error('관리자 데이터 로드 오류:', error)
     }
-  }
+  }, [])
 
-  const toggleAdminStatus = async (userId: string, currentStatus: boolean) => {
+  const checkAdminPermission = useCallback(async () => {
+    if (!user) return
+    
+    try {
+      const adminStatus = await db.isAdmin(user.id)
+      setIsAdmin(adminStatus)
+      
+      if (!adminStatus) {
+        router.push('/')
+        return
+      }
+      
+      await loadAdminData()
+    } catch (error) {
+      console.error('관리자 권한 확인 오류:', error)
+      router.push('/')
+    } finally {
+      setIsChecking(false)
+    }
+  }, [user, router, loadAdminData])
+
+  const toggleAdminStatus = useCallback(async (userId: string, currentStatus: boolean) => {
     try {
       await db.updateProfile(userId, { is_admin: !currentStatus })
       await loadAdminData() // 데이터 새로고침
@@ -95,7 +84,18 @@ export default function AdminPage() {
       console.error('관리자 권한 변경 오류:', error)
       alert('권한 변경 중 오류가 발생했습니다.')
     }
-  }
+  }, [loadAdminData])
+
+  useEffect(() => {
+    if (!loading) {
+      if (!user) {
+        router.push('/login')
+        return
+      }
+      
+      checkAdminPermission()
+    }
+  }, [user, loading, router, checkAdminPermission])
 
   if (loading || isChecking) {
     return (
