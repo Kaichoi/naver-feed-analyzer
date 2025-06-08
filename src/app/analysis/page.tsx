@@ -132,24 +132,32 @@ export default function AnalysisPage() {
     return `${remainingMinutes}분`
   }
 
-  // 실시간 타이머 업데이트
+  // 실시간 타이머 업데이트 - 수정된 로직
   useEffect(() => {
-    if (analysisRestriction.timeLeft && analysisRestriction.timeLeft > 0) {
-      const timer = setInterval(() => {
-        setAnalysisRestriction(prev => {
-          const newTimeLeft = (prev.timeLeft || 0) - 1000
-          if (newTimeLeft <= 0) {
-            // 시간이 만료되면 권한 재확인
-            checkAnalysisPermission()
-            return { ...prev, timeLeft: 0 }
-          }
-          return { ...prev, timeLeft: newTimeLeft }
-        })
-      }, 1000)
-      
-      return () => clearInterval(timer)
+    if (!analysisRestriction.timeLeft || analysisRestriction.timeLeft <= 0) {
+      return
     }
-  }, [analysisRestriction.timeLeft, checkAnalysisPermission])
+
+    const timer = setInterval(() => {
+      setAnalysisRestriction(prev => {
+        const newTimeLeft = (prev.timeLeft || 0) - 1000
+        
+        if (newTimeLeft <= 0) {
+          // 시간이 만료되면 권한 상태 복구 (무한 루프 방지)
+          setCanAnalyze(true) // canAnalyze 상태도 함께 업데이트
+          return { 
+            canAnalyze: true, 
+            timeLeft: 0,
+            reason: undefined
+          }
+        }
+        
+        return { ...prev, timeLeft: newTimeLeft }
+      })
+    }, 1000)
+    
+    return () => clearInterval(timer)
+  }, [analysisRestriction.timeLeft]) // checkAnalysisPermission 의존성 제거
 
   // 크롤링 시작 (서버 API 사용) - 병렬 처리로 성능 최적화
   const startCrawling = async () => {
@@ -164,12 +172,16 @@ export default function AnalysisPage() {
       if (!isAdmin) return
     }
 
-    // 분석 시작 시간 저장 및 통계 업데이트
-    const now = Date.now()
-    setAnalysisRestriction(prev => ({
-      ...prev,
-      timeLeft: now + 60 * 60 * 1000
-    }))
+    // 일반 사용자에게만 쿨다운 적용 (관리자는 제외)
+    if (!isAdmin) {
+      const oneHourInMs = 60 * 60 * 1000
+      setAnalysisRestriction({
+        canAnalyze: false,
+        timeLeft: oneHourInMs, // 1시간(밀리초)
+        reason: '1시간에 1회만 분석 가능합니다.'
+      })
+      setCanAnalyze(false)
+    }
 
     // 분석 시간 업데이트 (관리자 포함)
     try {
@@ -181,15 +193,6 @@ export default function AnalysisPage() {
       }))
     } catch (error) {
       console.error('분석 통계 업데이트 오류:', error)
-    }
-
-    // 일반 사용자만 권한 재확인 (관리자는 제외)
-    if (!isAdmin) {
-      try {
-        await checkAnalysisPermission()
-      } catch (error) {
-        console.error('권한 재확인 오류:', error)
-      }
     }
 
     setIsCrawling(true)
