@@ -60,19 +60,24 @@ export default function AnalysisPage() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [filterService, setFilterService] = useState<string>('all')
   
-  // Rate Limiting 상태
-  const [canAnalyze, setCanAnalyze] = useState(true)
+  // Rate Limiting 상태 - 개선된 안전한 초기값
+  const [canAnalyze, setCanAnalyze] = useState(false) // 🔥 초기에 차단 (안전한 방식)
   const [analysisRestriction, setAnalysisRestriction] = useState<{
     canAnalyze: boolean
     reason?: string
     timeLeft?: number
-  }>({ canAnalyze: true })
+  }>({ canAnalyze: false }) // 🔥 초기에 차단 (안전한 방식)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [permissionLoading, setPermissionLoading] = useState(true) // 🔥 권한 체크 로딩 상태 추가
 
-  // 분석 가능 여부 체크
+  // 분석 가능 여부 체크 - 개선된 버전
   const checkAnalysisPermission = useCallback(async () => {
-    if (!user) return
+    if (!user) {
+      setPermissionLoading(false)
+      return
+    }
 
+    setPermissionLoading(true) // 🔥 권한 체크 시작
     try {
       // 관리자 권한 확인
       const adminStatus = await db.isAdmin(user.id)
@@ -82,9 +87,19 @@ export default function AnalysisPage() {
       const permission = await db.canAnalyze(user.id)
       setAnalysisRestriction(permission)
       setCanAnalyze(permission.canAnalyze)
+      
+      console.log('권한 체크 완료:', { 
+        isAdmin: adminStatus, 
+        canAnalyze: permission.canAnalyze,
+        timeLeft: permission.timeLeft 
+      })
     } catch (error) {
       console.error('분석 권한 확인 오류:', error)
+      // 🔥 오류 시 안전하게 차단
       setCanAnalyze(false)
+      setAnalysisRestriction({ canAnalyze: false, reason: '권한 확인 중 오류가 발생했습니다.' })
+    } finally {
+      setPermissionLoading(false) // 🔥 권한 체크 완료
     }
   }, [user])
 
@@ -113,9 +128,57 @@ export default function AnalysisPage() {
     }
   }, [user, loading, router, checkAnalysisPermission, loadUserStats])
 
-  // Rate Limiting 체크 (분석 시작 전)
+  // Rate Limiting 체크 (분석 시작 전) - 개선된 버전
   const canStartAnalysis = () => {
+    // 🔥 권한 체크가 완료되지 않았으면 차단
+    if (permissionLoading) return false
+    
+    // 관리자는 항상 허용
+    if (isAdmin) return true
+    
+    // 일반 사용자는 제한 상태 확인
     return canAnalyze && analysisRestriction.canAnalyze
+  }
+
+  // 버튼 상태 및 텍스트 결정 함수 추가
+  const getButtonState = () => {
+    if (permissionLoading) {
+      return {
+        disabled: true,
+        text: '권한 확인 중...',
+        icon: 'loading'
+      }
+    }
+    
+    if (isCrawling) {
+      return {
+        disabled: true,
+        text: '분석 중...',
+        icon: 'stop'
+      }
+    }
+    
+    if (isAdmin) {
+      return {
+        disabled: false,
+        text: '분석 시작',
+        icon: 'play'
+      }
+    }
+    
+    if (!canStartAnalysis()) {
+      return {
+        disabled: true,
+        text: `대기 중 (${formatTimeRemaining(analysisRestriction.timeLeft || 0)})`,
+        icon: 'clock'
+      }
+    }
+    
+    return {
+      disabled: false,
+      text: '분석 시작',
+      icon: 'play'
+    }
   }
 
   // 남은 시간 포맷팅
@@ -132,9 +195,10 @@ export default function AnalysisPage() {
     return `${remainingMinutes}분`
   }
 
-  // 실시간 타이머 업데이트 - 수정된 로직
+  // 실시간 타이머 업데이트 - 개선된 로직
   useEffect(() => {
-    if (!analysisRestriction.timeLeft || analysisRestriction.timeLeft <= 0) {
+    // 🔥 권한 체크가 진행 중이거나 시간이 없으면 타이머 실행 안함
+    if (permissionLoading || !analysisRestriction.timeLeft || analysisRestriction.timeLeft <= 0) {
       return
     }
 
@@ -157,7 +221,7 @@ export default function AnalysisPage() {
     }, 1000)
     
     return () => clearInterval(timer)
-  }, [analysisRestriction.timeLeft]) // checkAnalysisPermission 의존성 제거
+  }, [analysisRestriction.timeLeft, permissionLoading]) // 🔥 permissionLoading 의존성 추가
 
   // 크롤링 시작 (스트리밍 API 사용) - parse.py와 동일한 로직
   const startCrawling = async () => {
@@ -428,26 +492,17 @@ export default function AnalysisPage() {
             <div className="flex gap-4">
               <Button 
                 onClick={startCrawling} 
-                disabled={isCrawling || !canStartAnalysis()}
+                disabled={getButtonState().disabled}
                 size="lg"
                 className="flex-1"
               >
-                {isCrawling ? (
-                  <>
-                    <Square className="h-4 w-4 mr-2" />
-                    분석 중...
-                  </>
-                ) : !canStartAnalysis() ? (
-                  <>
-                    <Clock className="h-4 w-4 mr-2" />
-                    대기 중 ({formatTimeRemaining(analysisRestriction.timeLeft || 0)})
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    분석 시작
-                  </>
+                {getButtonState().icon === 'loading' && (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                 )}
+                {getButtonState().icon === 'stop' && <Square className="h-4 w-4 mr-2" />}
+                {getButtonState().icon === 'clock' && <Clock className="h-4 w-4 mr-2" />}
+                {getButtonState().icon === 'play' && <Play className="h-4 w-4 mr-2" />}
+                {getButtonState().text}
               </Button>
               
               <Button 
@@ -461,8 +516,16 @@ export default function AnalysisPage() {
               </Button>
             </div>
 
-            {/* Rate Limiting 안내 */}
-            {!isAdmin && !analysisRestriction.canAnalyze && analysisRestriction.timeLeft && analysisRestriction.timeLeft > 0 && (
+            {/* Rate Limiting 및 권한 상태 안내 - 개선된 버전 */}
+            {permissionLoading && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-sm text-blue-800">
+                  🔍 사용자 권한을 확인하고 있습니다...
+                </p>
+              </div>
+            )}
+            
+            {!permissionLoading && !isAdmin && !analysisRestriction.canAnalyze && analysisRestriction.timeLeft && analysisRestriction.timeLeft > 0 && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                 <p className="text-sm text-yellow-800">
                   ⏰ {analysisRestriction.reason} 다음 분석까지 <strong>{formatTimeRemaining(analysisRestriction.timeLeft)}</strong> 남았습니다.
@@ -470,10 +533,18 @@ export default function AnalysisPage() {
               </div>
             )}
             
-            {isAdmin && (
+            {!permissionLoading && isAdmin && (
               <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
                 <p className="text-sm text-purple-800">
                   👑 관리자는 시간 제한 없이 언제든지 분석을 실행할 수 있습니다.
+                </p>
+              </div>
+            )}
+
+            {!permissionLoading && !isAdmin && analysisRestriction.canAnalyze && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <p className="text-sm text-green-800">
+                  ✅ 분석이 가능합니다. 아래 버튼을 클릭하여 시작하세요.
                 </p>
               </div>
             )}
