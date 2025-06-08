@@ -159,7 +159,7 @@ export default function AnalysisPage() {
     return () => clearInterval(timer)
   }, [analysisRestriction.timeLeft]) // checkAnalysisPermission 의존성 제거
 
-  // 크롤링 시작 (서버 API 사용) - 병렬 처리로 성능 최적화
+  // 크롤링 시작 (스트리밍 API 사용) - parse.py와 동일한 로직
   const startCrawling = async () => {
     if (!user) return
     
@@ -201,81 +201,70 @@ export default function AnalysisPage() {
     setItems([])
 
     try {
-      const sessionId = 'spGLaNSR5qMlh35F'
-      const maxScanCount = 15 // 스캔 횟수
-      const delay = 800 // 병렬 처리용 단축 딜레이
-      const concurrency = 3 // 동시 처리 수
-      
-      // 병렬 처리를 위한 배치 생성
-      const batches = []
-      for (let i = 0; i < maxScanCount; i += concurrency) {
-        batches.push(Array.from({ length: Math.min(concurrency, maxScanCount - i) }, (_, j) => i + j + 1))
+      // 🔥 스트리밍 API 사용으로 변경 - parse.py와 동일한 로직
+      const response = await fetch('/api/crawl/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: 'spGLaNSR5qMlh35F', // parse.py와 동일한 고정 세션 ID
+          maxPages: 15, // parse.py와 동일한 페이지 수
+          delay: 1500 // parse.py와 동일한 딜레이
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
-      
-      let processedPages = 0
-      const totalPages = maxScanCount
-      
-      // 각 배치를 순차적으로 처리하되, 배치 내에서는 병렬 처리
-      for (const batch of batches) {
-        const batchPromises = batch.map(async (page) => {
-          try {
-            const response = await fetch('/api/crawl', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ 
-                sessionId, 
-                page
-              }),
-            })
-            
-            if (!response.ok) {
-              console.warn(`스캔 ${page} 요청 실패:`, response.status)
-              return []
-            }
-            
-            const result = await response.json()
-            
-            if (result.error) {
-              console.warn(`스캔 ${page} 오류:`, result.error)
-              return []
-            }
-            
-            return result.items || []
-            
-          } catch (error) {
-            console.error(`스캔 ${page} 처리 중 오류:`, error)
-            return []
-          }
-        })
-        
-        // 배치 내 모든 요청 완료 대기
-        const batchResults = await Promise.all(batchPromises)
-        
-        // 결과 병합 및 중복 제거
-        const newItems = batchResults.flat()
-        setItems(prev => {
-          const combined = [...prev]
-          for (const newItem of newItems) {
-            if (!combined.some(existingItem => existingItem.url === newItem.url)) {
-              combined.push(newItem)
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('스트림을 읽을 수 없습니다')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          
+          // 줄바꿈으로 구분된 JSON 메시지들 처리
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || '' // 마지막 불완전한 줄은 버퍼에 보관
+
+          for (const line of lines) {
+            if (line.trim()) {
+              try {
+                const data = JSON.parse(line)
+                
+                if (data.type === 'progress') {
+                  setProgress(data.progress)
+                  setCurrentItem(data.currentPage || 0)
+                } else if (data.type === 'items') {
+                  // 실시간으로 아이템 추가 (이미 중복 제거됨)
+                  setItems(data.items)
+                } else if (data.type === 'complete') {
+                  setProgress(100)
+                  console.log(`✅ 크롤링 완료: 총 ${data.totalItems}개 항목 (중복 제거됨)`)
+                } else if (data.type === 'error') {
+                  throw new Error(data.message)
+                }
+              } catch (parseError) {
+                console.warn('JSON 파싱 오류:', parseError, 'Line:', line)
+              }
             }
           }
-          return combined
-        })
-        
-        // 진행률 업데이트
-        processedPages += batch.length
-        setCurrentItem(processedPages)
-        setProgress((processedPages / totalPages) * 100)
-        
-        // 배치 간 딜레이 (마지막 배치가 아닌 경우)
-        if (processedPages < totalPages) {
-          await new Promise(resolve => setTimeout(resolve, delay))
         }
+      } finally {
+        reader.releaseLock()
       }
-      
+
       setProgress(100)
       
     } catch (error) {
