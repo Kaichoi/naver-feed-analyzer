@@ -151,15 +151,60 @@ export const auth = {
     return data
   },
 
-  // 로그인
+  // 로그인 - 개선된 버전
   async signIn(email: string, password: string) {
     if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
+    
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
     
-    if (error) throw error
+    if (error) {
+      // 더 구체적인 에러 처리
+      if (error.message.includes('Email not confirmed')) {
+        // 실제 인증 상태 재확인
+        const { data: sessionData } = await supabase.auth.getSession()
+        if (sessionData?.session?.user?.email_confirmed_at) {
+          // 인증은 되어있지만 프로필 문제일 가능성
+          throw new Error('프로필 동기화 문제가 감지되었습니다. 관리자에게 문의하거나 브라우저 콘솔에서 진단 스크립트를 실행해주세요.')
+        }
+      }
+      throw error
+    }
+    
+    // 로그인 성공 후 프로필 존재 여부 확인
+    if (data.user) {
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', data.user.id)
+          .maybeSingle()
+        
+        if (!profile) {
+          console.warn('프로필이 없는 사용자 감지됨, 자동 생성 시도')
+          // 프로필 자동 생성 시도
+          await supabase
+            .from('profiles')
+            .insert({
+              id: data.user.id,
+              email: data.user.email,
+              full_name: data.user.user_metadata?.full_name || null,
+              avatar_url: data.user.user_metadata?.avatar_url || null,
+              is_admin: false,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              last_analysis_at: null,
+              total_analysis_count: 0
+            })
+        }
+      } catch (profileError) {
+        console.warn('프로필 확인/생성 중 오류:', profileError)
+        // 프로필 문제는 로그인을 막지 않음 (나중에 해결 가능)
+      }
+    }
+    
     return data
   },
 
