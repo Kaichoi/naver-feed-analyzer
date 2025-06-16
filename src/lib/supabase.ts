@@ -1,84 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
-// 환경변수를 정리하는 함수 (모든 공백과 줄바꿈 제거)
-const cleanEnvVar = (value: string | undefined): string => {
-  if (!value) return ''
-  // 모든 종류의 공백과 줄바꿈 문자 제거
-  return value.replace(/[\s\r\n\t]+/g, '').trim()
-}
-
-// 원본 환경변수 값 확인
-console.log('원본 환경변수:', {
-  rawUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
-  rawKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  rawUrlType: typeof process.env.NEXT_PUBLIC_SUPABASE_URL,
-  rawKeyType: typeof process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-})
-
-const supabaseUrl = cleanEnvVar(process.env.NEXT_PUBLIC_SUPABASE_URL) || ''
-const supabaseAnonKey = cleanEnvVar(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) || ''
-
-// 디버깅을 위한 환경변수 확인
-console.log('정리된 환경변수 확인:', {
-  url: supabaseUrl ? `${supabaseUrl.substring(0, 30)}...` : 'MISSING',
-  key: supabaseAnonKey ? `${supabaseAnonKey.substring(0, 30)}...` : 'MISSING',
-  urlLength: supabaseUrl.length,
-  keyLength: supabaseAnonKey.length,
-  urlValid: supabaseUrl.startsWith('https://'),
-  keyValid: supabaseAnonKey.startsWith('eyJ')
-})
-
-// 브라우저에서 직접 확인할 수 있도록 전역 변수에 저장
-if (typeof window !== 'undefined') {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (window as any).debugSupabase = {
-    url: supabaseUrl,
-    key: supabaseAnonKey,
-    urlLength: supabaseUrl.length,
-    keyLength: supabaseAnonKey.length,
-    fullKey: supabaseAnonKey  // 전체 키 확인용
-  }
-  console.log('🔍 브라우저 콘솔에서 window.debugSupabase를 입력해서 전체 값을 확인하세요')
-}
-
-// Supabase 클라이언트 생성 함수
-function createSupabaseClient() {
-  console.log('createSupabaseClient 호출됨')
-  
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.error('❌ Supabase 환경변수가 설정되지 않았습니다:', {
-      urlExists: !!supabaseUrl,
-      keyExists: !!supabaseAnonKey,
-      urlLength: supabaseUrl.length,
-      keyLength: supabaseAnonKey.length
-    })
-    return null
-  }
-  
-  if (!supabaseUrl.startsWith('https://')) {
-    console.error('❌ Supabase URL이 유효하지 않습니다:', supabaseUrl)
-    return null
-  }
-  
-  if (!supabaseAnonKey.startsWith('eyJ')) {
-    console.error('❌ Supabase ANON KEY가 유효하지 않습니다:', supabaseAnonKey.substring(0, 20))
-    return null
-  }
-  
-  try {
-    const client = createClient(supabaseUrl, supabaseAnonKey)
-    console.log('✅ Supabase 클라이언트 생성 성공')
-    return client
-  } catch (error) {
-    console.error('❌ Supabase 클라이언트 생성 실패:', error)
-    return null
-  }
-}
-
-// Supabase 클라이언트 인스턴스
-export const supabase = createSupabaseClient()
-
-console.log('최종 supabase 클라이언트:', supabase ? '✅ 생성됨' : '❌ null')
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+)
 
 // 데이터베이스 타입 정의
 export interface Profile {
@@ -454,13 +379,17 @@ export const db = {
     }
   },
 
-  // 분석 가능 여부 확인 (관리자는 시간 제한 없음)
+  // 분석 가능 여부 확인 (관리자는 시간 제한 없음) - 개선된 버전
   async canAnalyze(userId: string): Promise<{ canAnalyze: boolean; reason?: string; timeLeft?: number }> {
     if (!supabase) throw new Error('Supabase 클라이언트가 초기화되지 않았습니다.')
     
     try {
+      console.log('🔍 canAnalyze 호출됨:', { userId })
+      
       // 관리자 권한 확인
       const isUserAdmin = await this.isAdmin(userId)
+      console.log('👑 관리자 권한:', isUserAdmin)
+      
       if (isUserAdmin) {
         return { canAnalyze: true }
       }
@@ -468,36 +397,53 @@ export const db = {
       // 일반 사용자 시간 제한 확인
       const { data, error } = await supabase
         .from('profiles')
-        .select('last_analysis_at')
+        .select('last_analysis_at, total_analysis_count, email')
         .eq('id', userId)
         .single()
       
+      console.log('📊 프로필 조회 결과:', { data, error })
+      
       if (error) {
-        // 프로필이 없으면 분석 가능
+        console.warn('⚠️ 프로필 조회 오류, 분석 허용:', error)
         return { canAnalyze: true }
       }
       
       if (!data.last_analysis_at) {
-        // 첫 분석이면 가능
+        console.log('✅ 첫 분석, 허용')
         return { canAnalyze: true }
       }
       
       const lastAnalysis = new Date(data.last_analysis_at)
       const now = new Date()
-      const hoursSinceLastAnalysis = (now.getTime() - lastAnalysis.getTime()) / (1000 * 60 * 60)
+      const timeDiffMs = now.getTime() - lastAnalysis.getTime()
+      const hoursSinceLastAnalysis = timeDiffMs / (1000 * 60 * 60)
+      
+      console.log('⏰ 시간 계산:', {
+        lastAnalysis: lastAnalysis.toISOString(),
+        now: now.toISOString(),
+        timeDiffMs,
+        hoursSinceLastAnalysis,
+        email: data.email
+      })
       
       if (hoursSinceLastAnalysis >= 1) {
+        console.log('✅ 1시간 경과, 분석 허용')
         return { canAnalyze: true }
       } else {
-        const timeLeft = Math.ceil((1 - hoursSinceLastAnalysis) * 60) // 분 단위
+        const timeLeftMs = (1 * 60 * 60 * 1000) - timeDiffMs // 🔥 밀리초로 반환
+        console.log('❌ 시간 제한, 분석 차단:', {
+          timeLeftMs,
+          timeLeftMinutes: Math.ceil(timeLeftMs / (1000 * 60))
+        })
+        
         return { 
           canAnalyze: false, 
           reason: `1시간에 1회만 분석 가능합니다.`,
-          timeLeft 
+          timeLeft: timeLeftMs // 🔥 밀리초로 반환 (프론트엔드와 일치)
         }
       }
     } catch (error) {
-      console.error('분석 가능 여부 확인 오류:', error)
+      console.error('💥 분석 가능 여부 확인 오류:', error)
       return { canAnalyze: false, reason: '권한 확인 중 오류가 발생했습니다.' }
     }
   },
