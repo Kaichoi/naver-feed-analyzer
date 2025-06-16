@@ -73,28 +73,33 @@ export default function AnalysisPage() {
   // 분석 가능 여부 체크 - 개선된 버전
   const checkAnalysisPermission = useCallback(async () => {
     if (!user) {
+      console.log('🚫 사용자 없음, 권한 체크 종료')
       setPermissionLoading(false)
       return
     }
 
+    console.log('🔄 권한 체크 시작:', { userId: user.id, email: user.email })
     setPermissionLoading(true) // 🔥 권한 체크 시작
     try {
       // 관리자 권한 확인
       const adminStatus = await db.isAdmin(user.id)
       setIsAdmin(adminStatus)
+      console.log('👑 관리자 상태 설정:', adminStatus)
 
       // 분석 가능 여부 확인
       const permission = await db.canAnalyze(user.id)
       setAnalysisRestriction(permission)
       setCanAnalyze(permission.canAnalyze)
       
-      console.log('권한 체크 완료:', { 
+      console.log('✅ 권한 체크 완료:', { 
         isAdmin: adminStatus, 
         canAnalyze: permission.canAnalyze,
-        timeLeft: permission.timeLeft 
+        timeLeft: permission.timeLeft,
+        reason: permission.reason,
+        timeLeftFormatted: permission.timeLeft ? formatTimeRemaining(permission.timeLeft) : 'N/A'
       })
     } catch (error) {
-      console.error('분석 권한 확인 오류:', error)
+      console.error('💥 분석 권한 확인 오류:', error)
       // 🔥 오류 시 안전하게 차단
       setCanAnalyze(false)
       setAnalysisRestriction({ canAnalyze: false, reason: '권한 확인 중 오류가 발생했습니다.' })
@@ -544,7 +549,7 @@ export default function AnalysisPage() {
             {!permissionLoading && !isAdmin && analysisRestriction.canAnalyze && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                 <p className="text-sm text-green-800">
-                  ✅ 분석이 가능합니다. 아래 버튼을 클릭하여 시작하세요.
+                  ✅ 분석이 가능합니다. 분석 버튼을 클릭하여 시작하세요.
                 </p>
               </div>
             )}
